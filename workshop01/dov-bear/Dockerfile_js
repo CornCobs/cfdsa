@@ -1,0 +1,20 @@
+FROM node:20
+
+WORKDIR /app
+
+COPY main.js .
+COPY package.json .
+COPY package-lock.json .
+COPY public public
+COPY views views
+
+RUN npm ci
+
+ENV PORT=3000
+
+EXPOSE ${PORT}
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD curl -s -f http://localhost:${PORT}/healthz > /dev/null || exit 1
+
+ENTRYPOINT node main.js

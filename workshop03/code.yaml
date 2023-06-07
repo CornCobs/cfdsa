@@ -1,0 +1,125 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: code-ns
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: 
+  name: code-cm
+  namespace: code-ns
+data:
+  TZ: Asia/Singapore
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: code-secret
+  namespace: code-ns
+data:
+  PASSWORD: cGFzc3dvcmQK
+  SUDO_PASSWORD: cGFzc3dvcmQK
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: code-pvc
+  namespace: code-ns
+  labels:
+    app: code
+    name: code-pvc
+spec:
+  accessModes: 
+  - ReadWriteOnce
+  storageClassName: do-block-storage
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: code-deploy
+  namespace: code-ns
+  labels:
+    app: code
+    name: code-deploy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: code
+      name: code-po
+  template:
+    metadata:
+      name: code-po
+      namespace: code-ns
+      labels:
+        app: code
+        name: code-po
+    spec:
+      volumes:
+      - name: code-vol
+        persistentVolumeClaim:
+          claimName: code-pvc
+      containers:
+      - image: linuxserver/code-server:amd64-4.13.0
+        imagePullPolicy: IfNotPresent
+        name: code-container
+        ports:
+        - name: code-c-port
+          containerPort: 8443
+        volumeMounts:
+        - name: code-vol
+          mountPath: /config/workspace
+        envFrom:
+        - configMapRef:
+            name: code-cm
+        - secretRef:
+            name: code-secret
+        env:
+        - name: DEFAULT_WORKSPACE
+          value: /config/workspace
+        - name: PROXY_DOMAIN
+          value: code-167.172.4.132.nip.io
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: code-svc
+  namespace: code-ns
+  labels:
+    name: code-svc
+    app: code
+spec:
+  type: ClusterIP
+  selector:
+    app: code
+    name: code-po
+  ports:
+  - name: code-svc-port
+    port: 8443
+    targetPort: 8443
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: code-ing
+  namespace: code-ns
+  labels:
+    name: code-ing
+    app: code
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: code-167.172.4.132.nip.io
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: code-svc
+            port: 
+              name: code-svc-port

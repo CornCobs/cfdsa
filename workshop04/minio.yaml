@@ -1,0 +1,169 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: minio-ns
+  labels:
+    name: minio-ns
+    app: minio
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-secret
+  namespace: minio-ns
+data:
+  # user
+  MINIO_ROOT_USER: dXNlcgo=
+  # password
+  MINIO_ROOT_PASSWORD: cGFzc3dvcmQK
+---
+# headless service to uniquely identify pods as
+# http://minio-po-{0...3}.minio-hsvc.minio-ns.svc.cluster.local/data
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-hsvc
+  namespace: minio-ns
+  labels:
+    app: minio
+spec: 
+  clusterIP: None
+  selector:
+    name: minio-po
+    app: minio
+  ports:
+  - name: hsvc-svr-port
+    port: 9000
+    targetPort: 9000
+  - name: hsvc-web-port
+    port: 9090
+    targetPort: 9090
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-svc
+  namespace: minio-ns
+  labels:
+    app: minio
+spec:
+  type: ClusterIP
+  selector:
+    app: minio
+    name: minio-po
+  ports:
+  - name: svc-port
+    port: 9000
+    targetPort: 9000
+  - name: web-port
+    port: 9090
+    targetPort: 9090
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minio-sts
+  namespace: minio-ns
+  labels:
+    app: minio
+    name: minio-sts
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      name: minio-po
+      app: minio
+  serviceName: minio-hsvc
+  volumeClaimTemplates:
+  - apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: minio-pvc
+      labels:
+        app: minio
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      storageClassName: do-block-storage
+      resources:
+        requests:
+          storage: 1Gi
+  template:
+    metadata:
+      name: minio-po
+      labels:
+        name: minio-po
+        app: minio
+    spec:
+      initContainers:
+      - name: init-chown
+        image: busybox:1.36
+        command: ['/bin/sh', '-c', 'chown 1001:1001 /data; echo $?']
+        volumeMounts:
+        - name: minio-pvc
+          mountPath: /data
+      containers:
+      - name: minio-cont
+        image: bitnami/minio:2023.6.2
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9000
+        - containerPort: 9090
+        - containerPort: 900
+        envFrom:
+        - secretRef:
+            name: minio-secret
+        command:
+        - minio
+        - server
+        - --address=:9000
+        - --console-address=:9090
+        - http://minio-sts-{0...3}.minio-hsvc.minio-ns.svc.cluster.local/data
+        volumeMounts:
+        - name: minio-pvc
+          mountPath: /data
+        # Do not use readiness probe as it stops subsequent pods from starting
+        # readinessProbe:
+        #   httpGet:
+        #     path: /minio/health/ready
+        #     port: 900
+        livenessProbe:
+          httpGet:
+            path: /minio/health/live
+            port: 900
+          initialDelaySeconds: 600
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: 
+  name: minio-ing
+  namespace: minio-ns
+  labels:
+    name: minio-ing
+    app: minio
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: data-167.172.6.144.nip.io
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: minio-svc
+            port:
+              name: svc-port
+  - host: console-167.172.6.144.nip.io
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: minio-svc
+            port:
+              name: web-port
